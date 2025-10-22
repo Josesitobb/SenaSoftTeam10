@@ -1,0 +1,215 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model consultas {
+  id_consulta               Int             @id @default(autoincrement())
+  id_usuario                Int
+  fecha_hora                DateTime        @db.DateTime(0)
+  canal                     consultas_canal
+  termino_buscado           String          @db.VarChar(120)
+  id_medicamento_encontrado Int?
+  respuesta                 String          @db.Text
+  tiempo_respuesta_ms       Int
+  disponible                Boolean
+  usuarios                  usuarios        @relation(fields: [id_usuario], references: [id_usuario], onUpdate: Restrict, map: "consultas_ibfk_1")
+  medicamentos              medicamentos?   @relation(fields: [id_medicamento_encontrado], references: [id_medicamento], onDelete: Restrict, onUpdate: Restrict, map: "consultas_ibfk_2")
+
+  @@index([id_medicamento_encontrado], map: "id_medicamento_encontrado")
+  @@index([canal], map: "idx_consulta_canal")
+  @@index([fecha_hora], map: "idx_consulta_fecha")
+  @@index([termino_buscado], map: "idx_consulta_termino")
+  @@index([id_usuario], map: "idx_consulta_usuario")
+}
+
+model eps {
+  id_eps     Int         @id @default(autoincrement())
+  nombre_eps String      @db.VarChar(120)
+  nit        String      @unique(map: "nit") @db.VarChar(20)
+  regimen    eps_regimen
+  telefono   String      @db.VarChar(20)
+  email      String?     @db.VarChar(150)
+  sitio_web  String?     @db.VarChar(200)
+  sedes      sedes[]
+
+  @@index([nombre_eps], map: "idx_eps_nombre")
+}
+
+model equivalencias {
+  id_equivalencia                                                     Int                @id @default(autoincrement())
+  id_medicamento_base                                                 Int
+  id_medicamento_alternativo                                          Int
+  tipo                                                                equivalencias_tipo
+  medicamentos_equivalencias_id_medicamento_baseTomedicamentos        medicamentos       @relation("equivalencias_id_medicamento_baseTomedicamentos", fields: [id_medicamento_base], references: [id_medicamento], onUpdate: Restrict, map: "equivalencias_ibfk_1")
+  medicamentos_equivalencias_id_medicamento_alternativoTomedicamentos medicamentos       @relation("equivalencias_id_medicamento_alternativoTomedicamentos", fields: [id_medicamento_alternativo], references: [id_medicamento], onUpdate: Restrict, map: "equivalencias_ibfk_2")
+
+  @@index([id_medicamento_alternativo], map: "idx_eq_alt")
+  @@index([id_medicamento_base], map: "idx_eq_base")
+}
+
+model eventos_abastecimiento {
+  id_evento         Int                                @id @default(autoincrement())
+  id_sede           Int
+  id_medicamento    Int
+  tipo_evento       eventos_abastecimiento_tipo_evento
+  fecha_evento      DateTime                           @db.Date
+  cantidad_ajustada Int
+  observaciones     String?                            @db.VarChar(200)
+  sedes             sedes                              @relation(fields: [id_sede], references: [id_sede], onUpdate: Restrict, map: "eventos_abastecimiento_ibfk_1")
+  medicamentos      medicamentos                       @relation(fields: [id_medicamento], references: [id_medicamento], onUpdate: Restrict, map: "eventos_abastecimiento_ibfk_2")
+
+  @@index([id_medicamento], map: "idx_evt_medicamento")
+  @@index([id_sede], map: "idx_evt_sede")
+  @@index([tipo_evento], map: "idx_evt_tipo")
+}
+
+model inventario_sede {
+  id_inventario                   Int                                   @id @default(autoincrement())
+  id_sede                         Int
+  id_medicamento                  Int
+  stock                           Int
+  stock_minimo                    Int
+  fecha_actualizacion             DateTime                              @db.Date
+  estado_disponibilidad           inventario_sede_estado_disponibilidad
+  causa_no_disponibilidad         String?                               @db.VarChar(40)
+  fecha_estimada_reabastecimiento DateTime?                             @db.Date
+  lote                            String?                               @db.VarChar(20)
+  fecha_vencimiento               DateTime?                             @db.Date
+  sedes                           sedes                                 @relation(fields: [id_sede], references: [id_sede], onUpdate: Restrict, map: "inventario_sede_ibfk_1")
+  medicamentos                    medicamentos                          @relation(fields: [id_medicamento], references: [id_medicamento], onUpdate: Restrict, map: "inventario_sede_ibfk_2")
+
+  @@unique([id_sede, id_medicamento], map: "uq_inv_sede_medic")
+  @@index([estado_disponibilidad], map: "idx_inv_estado")
+  @@index([id_medicamento], map: "idx_inv_medicamento")
+  @@index([id_sede], map: "idx_inv_sede")
+}
+
+model medicamentos {
+  id_medicamento                                                       Int                      @id @default(autoincrement())
+  principio_activo                                                     String                   @db.VarChar(120)
+  nombre_comercial                                                     String                   @db.VarChar(120)
+  concentracion                                                        String                   @db.VarChar(30)
+  presentacion                                                         String                   @db.VarChar(60)
+  atc_code                                                             String?                  @db.VarChar(10)
+  via_administracion                                                   String                   @db.VarChar(40)
+  unidad_medida                                                        String                   @db.VarChar(10)
+  requiere_formula                                                     Boolean                  @default(true)
+  control_especial                                                     Boolean                  @default(false)
+  consultas                                                            consultas[]
+  equivalencias_equivalencias_id_medicamento_baseTomedicamentos        equivalencias[]          @relation("equivalencias_id_medicamento_baseTomedicamentos")
+  equivalencias_equivalencias_id_medicamento_alternativoTomedicamentos equivalencias[]          @relation("equivalencias_id_medicamento_alternativoTomedicamentos")
+  eventos_abastecimiento                                               eventos_abastecimiento[]
+  inventario_sede                                                      inventario_sede[]
+
+  @@index([nombre_comercial], map: "idx_med_nombre")
+  @@index([principio_activo], map: "idx_med_pa")
+}
+
+model roles {
+  id_rol     Int        @id @default(autoincrement())
+  nombre_rol String     @unique(map: "nombre_rol") @db.VarChar(60)
+  usuarios   usuarios[]
+
+  @@index([nombre_rol], map: "idx_roles_nombre")
+}
+
+model sedes {
+  id_sede                Int                      @id @default(autoincrement())
+  id_eps                 Int
+  nombre_sede            String                   @db.VarChar(160)
+  ciudad                 String                   @db.VarChar(80)
+  departamento           String                   @db.VarChar(80)
+  direccion              String                   @db.VarChar(160)
+  barrio                 String?                  @db.VarChar(100)
+  latitud                Decimal?                 @db.Decimal(9, 6)
+  longitud               Decimal?                 @db.Decimal(9, 6)
+  horario                String?                  @db.VarChar(80)
+  telefono               String                   @db.VarChar(20)
+  eventos_abastecimiento eventos_abastecimiento[]
+  inventario_sede        inventario_sede[]
+  eps                    eps                      @relation(fields: [id_eps], references: [id_eps], onUpdate: Restrict, map: "sedes_ibfk_1")
+  usuarios               usuarios[]
+
+  @@index([ciudad], map: "idx_sedes_ciudad")
+  @@index([id_eps], map: "idx_sedes_eps")
+}
+
+model usuarios {
+  id_usuario        Int                       @id @default(autoincrement())
+  tipo_documento    usuarios_tipo_documento
+  documento         String                    @unique(map: "documento") @db.VarChar(20)
+  nombre_usuario    String                    @db.VarChar(150)
+  email             String?                   @unique(map: "email") @db.VarChar(150)
+  password_hash     String?                   @db.VarChar(255)
+  edad              Int?
+  ciudad            String?                   @db.VarChar(80)
+  canal_preferido   usuarios_canal_preferido?
+  id_sede_preferida Int?
+  id_rol            Int
+  estado            usuarios_estado?          @default(activo)
+  fecha_creacion    DateTime?                 @default(now()) @db.DateTime(0)
+  ultimo_acceso     DateTime?                 @db.DateTime(0)
+  consultas         consultas[]
+  sedes             sedes?                    @relation(fields: [id_sede_preferida], references: [id_sede], onDelete: Restrict, onUpdate: Restrict, map: "usuarios_ibfk_1")
+  roles             roles                     @relation(fields: [id_rol], references: [id_rol], onUpdate: Restrict, map: "usuarios_ibfk_2")
+
+  @@index([id_rol], map: "id_rol")
+  @@index([id_sede_preferida], map: "id_sede_preferida")
+  @@index([ciudad], map: "idx_usuarios_ciudad")
+  @@index([documento], map: "idx_usuarios_documento")
+  @@index([email], map: "idx_usuarios_email")
+}
+
+enum usuarios_tipo_documento {
+  CC
+  CE
+  TI
+}
+
+enum consultas_canal {
+  web
+  whatsapp
+  telefono
+}
+
+enum eps_regimen {
+  Contributivo
+  Subsidiado
+  Mixto
+}
+
+enum equivalencias_tipo {
+  generico
+  equivalente_terapeutico
+}
+
+enum eventos_abastecimiento_tipo_evento {
+  reabastecimiento
+  retiro_temporal
+  ajuste_stock
+  desabastecimiento_nacional
+}
+
+enum inventario_sede_estado_disponibilidad {
+  disponible
+  bajo_stock
+  agotado
+}
+
+enum usuarios_canal_preferido {
+  web
+  whatsapp
+  telefono
+}
+
+enum usuarios_estado {
+  activo
+  inactivo
+  bloqueado
+}
