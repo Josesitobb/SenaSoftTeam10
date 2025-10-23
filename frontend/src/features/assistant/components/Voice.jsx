@@ -6,6 +6,7 @@ import { getInitialSession, sendMessage as apiSendMessage } from "../services/ap
 export default function VoiceScreen() {
   const navigate = useNavigate();
   const [sessionId, setSessionId] = useState(null);
+  const sessionIdRef = useRef(null); // Ref para mantener siempre el valor actual
   const [messages, setMessages] = useState([]);
   const [currentMessage, setCurrentMessage] = useState("");
   const [isPlaying, setIsPlaying] = useState(false);
@@ -16,6 +17,7 @@ export default function VoiceScreen() {
   const recognitionRef = useRef(null);
   const synthRef = useRef(window.speechSynthesis);
   const inputTimeoutRef = useRef(null);
+  const speakingTextRef = useRef(null);
 
   // Inicializar Web Speech API
   useEffect(() => {
@@ -37,13 +39,23 @@ export default function VoiceScreen() {
           transcript += event.results[i][0].transcript;
         }
         
-        // Solo enviar cuando sea resultado final
-        if (event.isFinal && transcript.trim()) {
-          setCurrentMessage(transcript);
-          // Pequeño delay para asegurar que el estado se actualice
+        // Determinar si el último resultado es final (Web Speech API usa isFinal por resultado)
+        const lastResult = event.results[event.results.length - 1];
+        const isFinal = lastResult && lastResult.isFinal;
+
+        console.log('🎤 Transcripción capturada:', transcript, 'isFinal:', isFinal);
+
+        if (isFinal && transcript.trim()) {
+          // Normalizar el texto inmediatamente para quitar puntuación final
+          const normalized = transcript.trim().replace(/[\.\?!,;:。？！，；：…]+$/u, "").trim();
+          console.log('✅ Texto normalizado:', normalized);
+          setCurrentMessage(normalized);
+          // Esperar 1 segundo para que el usuario vea qué se va a enviar, luego enviar automáticamente
           setTimeout(() => {
-            handleSendMessage(transcript);
-          }, 100);
+            console.log('📤 Enviando mensaje al backend:', normalized);
+            // Usar una función que espere a que sessionId esté disponible
+            sendMessageWhenReady(normalized);
+          }, 1000);
         }
       };
 
@@ -61,10 +73,20 @@ export default function VoiceScreen() {
   // Inicializar sesión
   useEffect(() => {
     const initializeSession = async () => {
+      // Evitar múltiples inicializaciones
+      if (sessionIdRef.current) {
+        console.log('⚠️ Sesión ya inicializada, saltando...');
+        return;
+      }
+      
       try {
         setLoading(true);
+        console.log('🔄 Inicializando sesión...');
         const response = await getInitialSession();
+        console.log('✅ Sesión obtenida:', response);
         setSessionId(response.sessionId);
+        sessionIdRef.current = response.sessionId; // Guardar en ref también
+        console.log('💾 SessionId guardado:', response.sessionId);
         setMessages([{ sender: "bot", text: response.message }]);
         // Reproducir mensaje inicial
         speakMessage(response.message);
@@ -86,6 +108,7 @@ export default function VoiceScreen() {
 
     // Cancelar cualquier audio en reproducción
     synthRef.current.cancel();
+    speakingTextRef.current = text;
 
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = "es-ES";
@@ -94,7 +117,25 @@ export default function VoiceScreen() {
     utterance.volume = 1;
 
     utterance.onstart = () => setIsPlaying(true);
-    utterance.onend = () => setIsPlaying(false);
+    utterance.onend = () => {
+      setIsPlaying(false);
+      speakingTextRef.current = null;
+
+      // Cuando Sally termina de hablar, activar el micrófono para que el usuario pueda responder.
+      // Pequeño delay para evitar que el SpeechRecognition choque con la síntesis que acaba de terminar.
+      setTimeout(() => {
+        try {
+          // Mostrar el input y permitir escuchar
+          setHideInput(false);
+          if (recognitionRef.current && !isListening && !loading) {
+            recognitionRef.current.start();
+          }
+        } catch (err) {
+          // start() puede lanzar si el reconocimiento ya está activo; simplemente registrar.
+          console.warn('No se pudo iniciar reconocimiento automáticamente:', err);
+        }
+      }, 250);
+    };
     utterance.onerror = (event) => {
       console.error("Speech synthesis error:", event);
       setIsPlaying(false);
@@ -103,20 +144,83 @@ export default function VoiceScreen() {
     synthRef.current.speak(utterance);
   };
 
+  // Omitir la voz actual (bot) y activar micrófono inmediatamente
+  const skipSpeech = () => {
+    try {
+      // Cancelar síntesis en curso
+      synthRef.current.cancel();
+    } catch (err) {
+      console.warn('Error cancelando síntesis al omitir:', err);
+    }
+
+    // Limpiar estado de reproducción y ref
+    setIsPlaying(false);
+    speakingTextRef.current = null;
+
+    // Pequeño delay antes de iniciar reconocimiento para evitar choques
+    setTimeout(() => {
+      try {
+        setHideInput(false);
+        if (recognitionRef.current && !isListening && !loading) {
+          recognitionRef.current.start();
+        }
+      } catch (err) {
+        console.warn('No se pudo iniciar reconocimiento al omitir voz:', err);
+      }
+    }, 150);
+  };
+
+  // Función que espera a que sessionId esté disponible antes de enviar
+  const sendMessageWhenReady = (text) => {
+    const checkAndSend = () => {
+      if (sessionIdRef.current) {
+        console.log('✅ SessionId disponible:', sessionIdRef.current, '- enviando mensaje');
+        handleSendMessage(text);
+      } else {
+        console.log('⏳ Esperando sessionId...');
+        setTimeout(checkAndSend, 100); // Reintentar cada 100ms
+      }
+    };
+    checkAndSend();
+  };
+
+  // Normalizar texto: quitar puntuación final indeseada (MVP)
+  const normalizeText = (t) => {
+    if (!t && t !== "") return t;
+    const trimmed = String(t).trim();
+    // Eliminar puntos, comas y signos de interrogación/exclamación al final (incluye algunos signos Unicode)
+    const cleaned = trimmed.replace(/[\.\?!,;:。？！，；：…]+$/u, "");
+    return cleaned.trim();
+  };
+
   // Enviar mensaje
   const handleSendMessage = async (text) => {
-    if (!sessionId || !text.trim()) return;
+    console.log('🔄 handleSendMessage llamado con:', text);
+    const normalized = normalizeText(text);
+    console.log('🔄 Texto después de normalizar:', normalized);
+    console.log('🔄 SessionId (state):', sessionId);
+    console.log('🔄 SessionId (ref):', sessionIdRef.current);
+    
+    // Usar sessionIdRef.current en lugar de sessionId
+    const currentSessionId = sessionIdRef.current;
+    
+    if (!currentSessionId || normalized == null || !normalized.trim()) {
+      console.log('❌ No se puede enviar - SessionId:', currentSessionId, 'Normalized:', normalized);
+      return;
+    }
 
+    console.log('✅ Enviando al backend con sessionId:', currentSessionId, 'mensaje:', normalized);
     try {
       setLoading(true);
-      setHideInput(true);
-      setCurrentMessage("");
+  setHideInput(true);
+  // Actualizar input con la versión normalizada (quita el punto final visible)
+  setCurrentMessage(normalized);
 
-      // Agregar mensaje del usuario
-      setMessages((prev) => [...prev, { sender: "user", text }]);
+  // Agregar mensaje del usuario (texto normalizado)
+  setMessages((prev) => [...prev, { sender: "user", text: normalized }]);
 
-      // Enviar al API
-      const response = await apiSendMessage(sessionId, text);
+  // Enviar al API usando currentSessionId (de la ref, no del estado)
+  const response = await apiSendMessage(currentSessionId, normalized);
 
       // Agregar respuesta del bot
       setMessages((prev) => [
@@ -243,6 +347,17 @@ export default function VoiceScreen() {
                 Sally está hablando...
               </p>
             )}
+            {/* Botón para omitir voz si el texto es largo */}
+            {isPlaying && speakingTextRef.current && speakingTextRef.current.length > 120 && (
+              <div className="mt-2 flex justify-center">
+                <button
+                  onClick={skipSpeech}
+                  className="text-sm bg-red-500 hover:bg-red-600 text-white px-3 py-2 rounded-md shadow-sm"
+                >
+                  Omitir voz
+                </button>
+              </div>
+            )}
             {isListening && (
               <p className="text-blue-600 font-semibold flex items-center justify-center gap-2">
                 <Loader size={18} className="animate-spin" />
@@ -273,29 +388,16 @@ export default function VoiceScreen() {
             </button>
           </div>
 
-          {/* Input as fallback - Oculto durante 3 segundos después de enviar */}
-          {!hideInput && (
-            <div className="mt-6 flex gap-2 animate-fadeIn">
+          {/* Mostrar lo que se va a enviar (read-only) */}
+          {currentMessage && !hideInput && (
+            <div className="mt-6 animate-fadeIn">
               <input
                 type="text"
                 value={currentMessage}
-                onChange={(e) => setCurrentMessage(e.target.value)}
-                onKeyPress={(e) => {
-                  if (e.key === "Enter" && !loading) {
-                    handleSendMessage(currentMessage);
-                  }
-                }}
-                placeholder="O escribe tu mensaje aquí..."
-                disabled={loading}
-                className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#D6AC92]"
+                readOnly
+                placeholder="Tu mensaje aparecerá aquí..."
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg bg-gray-50 text-center text-gray-700 cursor-default"
               />
-              <button
-                onClick={() => handleSendMessage(currentMessage)}
-                disabled={loading || !currentMessage.trim()}
-                className="bg-[#D6AC92] hover:bg-[#b89878] disabled:bg-gray-400 text-white px-6 py-3 rounded-lg font-semibold transition"
-              >
-                Enviar
-              </button>
             </div>
           )}
         </div>

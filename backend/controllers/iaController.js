@@ -72,26 +72,43 @@ async function manejarRegistroUsuario(session, userInput, sessionId, res) {
   
   switch (session.currentQuestion) {
     case 'tipo_documento':
-      const tipoDoc = userInput.toUpperCase().replace(/[^A-Z]/g, '');
-      if (['CC', 'CE', 'TI'].includes(tipoDoc) || 
-          userInput.toLowerCase().includes('cedula') || 
-          userInput.toLowerCase().includes('ciudadania') ||
-          userInput.toLowerCase().includes('extranjeria') ||
-          userInput.toLowerCase().includes('identidad')) {
-        
-        if (tipoDoc === 'CC' || userInput.toLowerCase().includes('cedula') || userInput.toLowerCase().includes('ciudadania')) {
-          session.newUserData.tipo_documento = 'CC';
-        } else if (tipoDoc === 'CE' || userInput.toLowerCase().includes('extranjeria')) {
-          session.newUserData.tipo_documento = 'CE';
-        } else if (tipoDoc === 'TI' || userInput.toLowerCase().includes('identidad')) {
-          session.newUserData.tipo_documento = 'TI';
-        } else {
-          session.newUserData.tipo_documento = tipoDoc;
-        }
-        
+      // Normalizar input: quitar tildes, convertir a minúsculas, quitar puntuación
+      const normalizeText = (text) => {
+        return text
+          .toLowerCase()
+          .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // Quitar tildes
+          .replace(/[^\w\s]/g, '') // Quitar puntuación
+          .trim();
+      };
+      
+      const inputNormalizado = normalizeText(userInput);
+      
+      // Detectar tipo de documento de forma flexible
+      let tipoDocumentoDetectado = null;
+      
+      if (inputNormalizado.includes('cc') || 
+          inputNormalizado.includes('cedula') && (inputNormalizado.includes('ciudadania') || inputNormalizado.includes('ciudadana')) ||
+          inputNormalizado.includes('cedula ciudadania') ||
+          inputNormalizado.includes('cedula de ciudadania')) {
+        tipoDocumentoDetectado = 'CC';
+      } else if (inputNormalizado.includes('ce') || 
+                 inputNormalizado.includes('cedula') && inputNormalizado.includes('extranjeria') ||
+                 inputNormalizado.includes('cedula extranjeria') ||
+                 inputNormalizado.includes('cedula de extranjeria')) {
+        tipoDocumentoDetectado = 'CE';
+      } else if (inputNormalizado.includes('ti') || 
+                 inputNormalizado.includes('tarjeta') && inputNormalizado.includes('identidad') ||
+                 inputNormalizado.includes('tarjeta identidad') ||
+                 inputNormalizado.includes('tarjeta de identidad')) {
+        tipoDocumentoDetectado = 'TI';
+      }
+      
+      if (tipoDocumentoDetectado) {
+        session.newUserData.tipo_documento = tipoDocumentoDetectado;
         session.currentQuestion = 'nombre';
         preguntaValida = true;
         siguientePregunta = '¿Cuál es su nombre completo?';
+        console.log(`✅ Tipo de documento detectado: ${tipoDocumentoDetectado} desde input: "${userInput}"`);
       } else {
         errorMensaje = 'Por favor seleccione: CC (Cédula de Ciudadanía), CE (Cédula de Extranjería) o TI (Tarjeta de Identidad)';
       }
@@ -147,20 +164,41 @@ async function manejarRegistroUsuario(session, userInput, sessionId, res) {
       break;
       
     case 'canal_preferido':
-      const canal = userInput.toLowerCase().trim();
-      if (['web', 'whatsapp', 'telefono'].includes(canal) || 
-          canal.includes('whats') || canal.includes('telefon') || canal.includes('web')) {
-        
-        if (canal.includes('whats')) {
-          session.newUserData.canal_preferido = 'whatsapp';
-        } else if (canal.includes('telefon')) {
-          session.newUserData.canal_preferido = 'telefono';
-        } else {
-          session.newUserData.canal_preferido = 'web';
-        }
-        
+      // Normalizar input: quitar tildes, convertir a minúsculas, quitar puntuación
+      const normalizeText2 = (text) => {
+        return text
+          .toLowerCase()
+          .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // Quitar tildes
+          .replace(/[^\w\s]/g, '') // Quitar puntuación
+          .trim();
+      };
+      
+      const canalNormalizado = normalizeText2(userInput);
+      let canalDetectado = null;
+      
+      // Detectar canal de forma flexible
+      if (canalNormalizado === 'web' || 
+          canalNormalizado.includes('web') || 
+          canalNormalizado.includes('internet') ||
+          canalNormalizado.includes('pagina')) {
+        canalDetectado = 'web';
+      } else if (canalNormalizado.includes('whats') || 
+                 canalNormalizado.includes('wasa') ||
+                 canalNormalizado.includes('wasap') ||
+                 canalNormalizado === 'whatsapp') {
+        canalDetectado = 'whatsapp';
+      } else if (canalNormalizado.includes('telefon') || 
+                 canalNormalizado.includes('llamada') ||
+                 canalNormalizado.includes('celular') ||
+                 canalNormalizado.includes('movil')) {
+        canalDetectado = 'telefono';
+      }
+      
+      if (canalDetectado) {
+        session.newUserData.canal_preferido = canalDetectado;
         session.currentQuestion = 'sede';
         preguntaValida = true;
+        console.log(`✅ Canal detectado: ${canalDetectado} desde input: "${userInput}"`);
         // Mostrar las sedes disponibles
         const sedes = await obtenerSedesParaRegistro();
         siguientePregunta = `Por favor seleccione una sede de las disponibles (escriba el número):\n\n${sedes.slice(0, 10).map((sede, index) => 
@@ -297,64 +335,98 @@ async function procesarConsultaMedica(session, userInput, sessionId, res) {
     console.log(`✅ Datos consultados: ${todosMedicamentos.length} medicamentos, ${inventarioCompleto.length} en inventario, ${sedesConEps.length} sedes, ${todasEps.length} EPS`);
 
     const client = new OpenAI({ apiKey });
-    const model = process.env.OPENAI_MODEL || 'gpt-3.5-turbo';
+    const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
 
-    // Crear contexto optimizado para la IA (limitado para evitar exceso de tokens)
-    let systemPrompt = `Eres Sally, asistente especializada en medicamentos para adultos mayores (50-80 años).
+    // Crear estadísticas útiles para la IA (optimizado para tokens)
+    const medicamentosAgotados = inventarioCompleto.filter(item => item.disponibilidad.stock_actual === 0);
+    const medicamentosDisponibles = inventarioCompleto.filter(item => item.disponibilidad.disponible);
+    
+    // Agrupar medicamentos por sede (resumen)
+    const medicamentosPorSede = {};
+    inventarioCompleto.forEach(item => {
+      const sede = item.ubicacion.sede;
+      if (!medicamentosPorSede[sede]) {
+        medicamentosPorSede[sede] = { disponibles: 0, agotados: 0, total: 0, lista_disponibles: [] };
+      }
+      medicamentosPorSede[sede].total++;
+      if (item.disponibilidad.disponible) {
+        medicamentosPorSede[sede].disponibles++;
+        medicamentosPorSede[sede].lista_disponibles.push({
+          nombre: item.medicamento.nombre_comercial,
+          stock: item.disponibilidad.stock_actual
+        });
+      } else {
+        medicamentosPorSede[sede].agotados++;
+      }
+    });
 
-USUARIO VERIFICADO: ${session.userData.nombre_usuario} (Documento: ${session.userData.documento})
+    // Lista compacta de medicamentos agotados
+    const listaAgotados = medicamentosAgotados.map(item => ({
+      medicamento: item.medicamento.nombre_comercial,
+      sede: item.ubicacion.sede
+    }));
 
-REGLAS ESTRICTAS PARA MEDICAMENTOS:
-1. SOLO puedes hablar de medicamentos que EXISTEN en la base de datos
-2. Si un medicamento NO está en la lista, di claramente "No tenemos ese medicamento disponible"
-3. Si un medicamento SÍ está disponible, indica EXACTAMENTE en qué sedes se encuentra
-4. Usa lenguaje claro y simple para adultos mayores
-5. Siempre recomienda consultar con un médico
-6. Mantén respuestas cortas y directas
+    // Crear contexto OPTIMIZADO para la IA (reducido en tokens)
+    let systemPrompt = `Eres Sally, asistente de medicamentos para adultos mayores.
 
-RESUMEN DE DATOS DISPONIBLES:
-- ${todosMedicamentos.length} medicamentos en catálogo
-- ${inventarioCompleto.length} ubicaciones de medicamentos en ${sedesConEps.length} sedes
-- ${todasEps.length} EPS disponibles
+👤 USUARIO: ${session.userData.nombre_usuario} (Doc: ${session.userData.documento})
 
-PRINCIPALES MEDICAMENTOS DISPONIBLES (muestra):
-${JSON.stringify(todosMedicamentos.slice(0, 30).map(m => ({
-  nombre: m.nombre_comercial,
-  principio: m.principio_activo
-})), null, 2)}`;
+📊 ESTADÍSTICAS:
+- Medicamentos en catálogo: ${todosMedicamentos.length}
+- Ubicaciones en inventario: ${inventarioCompleto.length}
+- Disponibles: ${medicamentosDisponibles.length} | Agotados: ${medicamentosAgotados.length}
+- Sedes: ${sedesConEps.length} | EPS: ${todasEps.length}
 
-    // Si encontramos un medicamento específico, agregarlo al contexto
+📍 RESUMEN POR SEDE:
+${Object.entries(medicamentosPorSede).map(([sede, datos]) => 
+  `${sede}: ${datos.disponibles} disponibles, ${datos.agotados} agotados`
+).join('\n')}
+
+💊 CATÁLOGO COMPLETO (nombres):
+${todosMedicamentos.map(m => `${m.nombre_comercial} (${m.principio_activo})`).join(', ')}
+
+❌ MEDICAMENTOS AGOTADOS:
+${listaAgotados.length > 0 ? JSON.stringify(listaAgotados.slice(0, 50)) : 'Ninguno'}
+
+🏢 SEDES:
+${sedesConEps.map(s => `${s.sede.nombre} - ${s.sede.ciudad} (EPS: ${s.eps ? s.eps.nombre : 'N/A'})`).join('\n')}`;
+
+    // Si encontramos un medicamento específico, agregarlo con detalles
     if (medicamentoEspecifico) {
       systemPrompt += `
 
-🎯 MEDICAMENTO ESPECÍFICO CONSULTADO: "${medicamentoEspecifico.medicamento}"
-UBICACIONES EXACTAS:
-${JSON.stringify(medicamentoEspecifico.ubicaciones, null, 2)}
-
-IMPORTANTE: El usuario preguntó específicamente por "${medicamentoEspecifico.medicamento}". 
+🎯 BÚSQUEDA ESPECÍFICA: "${medicamentoEspecifico.medicamento}"
 ${medicamentoEspecifico.ubicaciones.length > 0 
-  ? `SÍ tenemos este medicamento disponible en ${medicamentoEspecifico.ubicaciones.length} ubicación(es). Proporciona información detallada de dónde encontrarlo.`
-  : `NO tenemos este medicamento en nuestro inventario. Informa claramente que no está disponible.`
+  ? `✅ DISPONIBLE en ${medicamentoEspecifico.ubicaciones.length} ubicación(es):
+${medicamentoEspecifico.ubicaciones.map(u => 
+  `• ${u.sede} (${u.ciudad}): Stock ${u.stock} - ${u.direccion} - Tel: ${u.telefono}`
+).join('\n')}`
+  : '❌ NO DISPONIBLE en inventario'
 }`;
     } else {
-      // Si no encontramos medicamento específico, agregar información general limitada
+      // Si no hay búsqueda específica, agregar medicamentos disponibles por sede (limitado)
       systemPrompt += `
 
-INFORMACIÓN GENERAL DE INVENTARIO (limitada):
-${JSON.stringify(inventarioCompleto.slice(0, 10), null, 2)}
-
-SEDES PRINCIPALES:
-${JSON.stringify(sedesConEps.slice(0, 10), null, 2)}`;
+🏥 DISPONIBLES POR SEDE (top 20 por sede):
+${Object.entries(medicamentosPorSede).map(([sede, datos]) => 
+  `${sede}: ${datos.lista_disponibles.slice(0, 20).map(m => `${m.nombre}(${m.stock})`).join(', ')}`
+).join('\n')}`;
     }
 
     systemPrompt += `
 
-INSTRUCCIONES FINALES:
-- Si preguntan por un medicamento que NO aparece en la lista, responde: "No tenemos [nombre del medicamento] disponible en nuestras farmacias"
-- Si preguntan por un medicamento que SÍ aparece, indica las sedes exactas donde está disponible
-- Para consultas sobre EPS, usa solo las EPS de la lista
-- Para consultas sobre sedes, proporciona información completa incluyendo la EPS asociada
-- Siempre termina recomendando consultar con un médico`;
+📋 INSTRUCCIONES:
+1. Usa las ESTADÍSTICAS para responder sobre cantidades
+2. Para medicamentos específicos, revisa el CATÁLOGO COMPLETO
+3. Para ubicaciones, usa el RESUMEN POR SEDE
+4. Si preguntan "¿Tienen X?", busca en el catálogo y di dónde está
+5. Respuestas cortas y claras
+6. Recomienda consultar con médico
+
+EJEMPLOS:
+- "¿Cuántos en Sede Norte?" → Usa el resumen (${medicamentosPorSede['Sede Norte']?.disponibles || 0} disponibles)
+- "¿Cuáles agotados?" → Lista los primeros 10 de medicamentos agotados
+- "¿Tienen Acetaminofén?" → Busca en catálogo y di ubicación + stock`;
 
     const messages = [
       { role: 'system', content: systemPrompt },
@@ -365,7 +437,7 @@ INSTRUCCIONES FINALES:
     const response = await client.chat.completions.create({
       model: model,
       messages: messages,
-      max_tokens: 500,
+      max_completion_tokens: 16384,
       temperature: 0.2 // Más determinístico para información médica
     });
 

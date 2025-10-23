@@ -6,7 +6,14 @@ export default function InputBar({ onSend, disabled = false }) {
   const [value, setValue] = useState("");
 
   const submit = () => {
-    const text = value.trim();
+    // Normalizar texto antes de enviar: quitar puntuación final indeseada
+    const normalizeText = (t) => {
+      if (t == null) return t;
+      const trimmed = String(t).trim();
+      return trimmed.replace(/[\.\?!,;:。？！，；：…]+$/u, "").trim();
+    };
+
+    const text = normalizeText(value);
     if (!text || disabled) return;
     onSend?.(text);
     setValue("");
