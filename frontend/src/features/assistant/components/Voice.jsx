@@ -184,12 +184,19 @@ export default function VoiceScreen() {
     checkAndSend();
   };
 
-  // Normalizar texto: quitar puntuación final indeseada (MVP)
+  // Normalizar texto: quitar puntuación final indeseada y formatear números (MVP)
   const normalizeText = (t) => {
     if (!t && t !== "") return t;
     const trimmed = String(t).trim();
-    // Eliminar puntos, comas y signos de interrogación/exclamación al final (incluye algunos signos Unicode)
-    const cleaned = trimmed.replace(/[\.\?!,;:。？！，；：…]+$/u, "");
+    
+    // PASO 1: Juntar números que estén separados por espacios
+    // Ejemplo: "1 0 2 4 4 6 9 9 6 3" -> "1024469963"
+    // Ejemplo: "102 446 99 63" -> "1024469963"
+    const numbersJoined = trimmed.replace(/(\d)\s+(?=\d)/g, '$1');
+    
+    // PASO 2: Eliminar puntos, comas y signos de interrogación/exclamación al final
+    const cleaned = numbersJoined.replace(/[\.\?!,;:。？！，；：…]+$/u, "");
+    
     return cleaned.trim();
   };
 
